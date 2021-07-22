@@ -19,6 +19,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import static java.util.Arrays.asList;
+
 public class Main {
 
     public static void main(String[] args) throws InterruptedException {
@@ -35,8 +37,8 @@ public class Main {
             Runnable runnable = () -> {
                 try (KafkaConsumer<Long, String> consumer = new KafkaConsumer<>(shardConsumerProps)) {
                     TopicPartition tp = new TopicPartition(Constants.ROUTER_TO_SHARDS_TOPIC, partition);
-                    consumer.assign(Arrays.asList(tp));
-                    consumer.seekToBeginning(Arrays.asList(tp));
+                    consumer.assign(asList(tp));
+                    consumer.seekToBeginning(asList(tp));
                     System.out.println(String.format("Starting consuming from partition № %s", partition));
                     ObjectMapper objectMapper = new ObjectMapper();
                     objectMapper.registerModule(new JavaTimeModule());
@@ -62,9 +64,38 @@ public class Main {
             executorService.submit(runnable);
         }
 
+        Properties routerConsumerProps = new Properties();
+        routerConsumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, "ROUTER_CONSUMER_GROUP");
+        routerConsumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, Constants.KAFKA_SERVER);
+        routerConsumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, LongDeserializer.class.getName());
+        routerConsumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
 
+        try (KafkaConsumer<Long, String> consumer = new KafkaConsumer<>(shardConsumerProps)) {
+            TopicPartition topicPartition = new TopicPartition(Constants.ROUTER_TO_SHARDS_TOPIC, 0);
+            consumer.assign(asList(topicPartition));
+            consumer.seekToBeginning(asList(topicPartition));
+            ObjectMapper objectMapper = new ObjectMapper();
+            objectMapper.registerModule(new JavaTimeModule());
+            while (true){
+                ConsumerRecords<Long, String> consumerRecords = consumer.poll(Duration.ofMillis(1000));
+                if (!consumerRecords.isEmpty()) {
+                    for (var rec : consumerRecords) {
+                        System.out.println(String.format("Received: topic == [%s], partition == [%s], offset == [%s], key == [%s], value == [%s]",
+                                rec.topic(), rec.partition(), rec.offset(), rec.key(), rec.value()));
+                        try {
+                            ExchangeDeal exchangeDeal = objectMapper.readValue(rec.value(), ExchangeDeal.class);
+                            TimeUnit.MILLISECONDS.sleep(100);
+                        } catch (JsonProcessingException e) {
+                            e.printStackTrace();
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            }
+        }
 
-        executorService.shutdown();
+        //executorService.shutdown();
 
     }
 
